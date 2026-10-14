@@ -1,0 +1,1371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Omphalos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed map. The HUD rides the edges: compass of bearings along the top,
+   log distance ruler down the right, pole card top-left, controls bottom-left. */
+:root{
+  --glass: rgba(15,19,25,.82);
+  --glass-hi: rgba(32,39,49,.95);
+  --ink: #EDF1F4;
+  --ink-dim: rgba(237,241,244,.64);
+  --line: rgba(237,241,244,.16);
+  --accent: #F0B44C;
+  --accent-ink: #1C1406;
+  --f-label: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-ui: "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --compass-h: 26px;
+  --ruler-w: 74px;
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  color-scheme: dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;overflow:hidden;background:#11151a;color:var(--ink);
+  font:14px/1.35 var(--f-ui);-webkit-tap-highlight-color:transparent;overscroll-behavior:none;
+  -webkit-user-select:none;user-select:none}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+#gl{touch-action:none;cursor:grab}
+#gl.dragging{cursor:grabbing}
+#hud{pointer-events:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.glass{background:var(--glass);-webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2);
+  border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.28)}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.eyebrow{font:600 11px/1 var(--f-label);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+
+/* Pole card */
+#pole-card{position:fixed;left:calc(12px + var(--sal));top:calc(var(--compass-h) + 10px + var(--sat));
+  width:min(330px, calc(100vw - var(--ruler-w) - 28px - var(--sal) - var(--sar)));padding:10px 12px 9px;z-index:5}
+#pole-btn{display:grid;gap:3px;text-align:left;width:100%}
+#pole-name{font:600 21px/1.08 var(--f-label);letter-spacing:.01em;text-wrap:balance}
+#pole-coords{font-size:11px;color:var(--ink-dim)}
+#pole-btn .hint-search{display:flex;align-items:center;gap:6px}
+#pole-btn svg{opacity:.7;flex:none}
+#anti{margin-top:7px;padding-top:7px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-dim);display:flex;gap:6px;align-items:baseline;min-width:0}
+#anti b{font-weight:500;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#search{display:grid;gap:6px}
+#q{width:100%;font:500 16px var(--f-ui);color:var(--ink);background:rgba(255,255,255,.07);border:1px solid var(--line);
+  border-radius:7px;padding:8px 10px;outline:none;-webkit-user-select:text;user-select:text}
+#q::placeholder{color:var(--ink-dim)}
+#results{list-style:none;margin:0;padding:0;display:grid;gap:2px;max-height:50vh;overflow:auto}
+#results button{width:100%;text-align:left;padding:7px 8px;border-radius:6px;display:grid;gap:1px}
+#results button:hover,#results button.sel{background:rgba(255,255,255,.08)}
+#results .rn{font-weight:600}
+#results .rs{font-size:12px;color:var(--ink-dim)}
+#results .msg{padding:6px 8px;color:var(--ink-dim);font-size:13px}
+
+/* Controls */
+#controls{position:fixed;left:calc(12px + var(--sal));bottom:calc(30px + var(--sab));display:grid;gap:8px;z-index:5}
+.ctl{width:44px;height:44px;display:grid;place-items:center;border-radius:12px}
+.ctl:hover{background:var(--glass-hi)}
+.ctl svg{width:22px;height:22px}
+#units-btn{font:600 13px var(--f-label);letter-spacing:.06em}
+#north-btn svg{transition:transform .08s linear}
+#layer-menu{position:fixed;left:calc(64px + var(--sal));bottom:calc(30px + var(--sab));padding:6px;z-index:6;display:grid;gap:2px;min-width:150px}
+#layer-menu button{display:flex;gap:9px;align-items:center;padding:8px 10px;border-radius:7px;text-align:left;font-weight:500}
+#layer-menu button:hover{background:rgba(255,255,255,.08)}
+#layer-menu button[aria-checked="true"]{color:var(--accent)}
+#layer-menu .dot{width:8px;height:8px;border-radius:50%;border:1.5px solid currentColor}
+#layer-menu button[aria-checked="true"] .dot{background:currentColor}
+
+/* Probe */
+#probe{position:fixed;z-index:7;padding:8px 10px;max-width:250px;pointer-events:none;left:0;top:0}
+#probe.pinned{pointer-events:auto}
+#probe .pd{font:600 16px/1.15 var(--f-label);letter-spacing:.01em}
+#probe .pc{font-size:11px;color:var(--ink-dim);margin-top:2px}
+#probe-go{margin-top:8px;width:100%;padding:7px 10px;border-radius:7px;background:var(--accent);color:var(--accent-ink);font:600 14px var(--f-label);letter-spacing:.04em}
+#probe:not(.pinned) #probe-go{display:none}
+
+/* Hint / toast */
+#hint{position:fixed;left:calc(68px + var(--sal));right:calc(var(--ruler-w) + 8px + var(--sar));margin:0 auto;width:fit-content;bottom:calc(30px + var(--sab));padding:9px 14px;z-index:4;
+  font-size:13px;text-align:center;text-wrap:balance;transition:opacity .4s}
+#hint.gone{opacity:0;pointer-events:none}
+#attrib{position:fixed;left:calc(12px + var(--sal));bottom:calc(6px + var(--sab));z-index:4;font-size:10.5px;color:var(--ink-dim);
+  text-shadow:0 0 3px #000,0 0 6px rgba(0,0,0,.6);max-width:calc(100vw - var(--ruler-w) - 24px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Help */
+#help{position:fixed;z-index:9;left:50%;top:50%;transform:translate(-50%,-50%);width:min(440px, calc(100vw - 32px));
+  max-height:calc(100% - 40px);overflow:auto;padding:18px 20px 16px;-webkit-user-select:text;user-select:text}
+#help h2{margin:2px 0 8px;font:600 26px/1.05 var(--f-label);text-wrap:balance}
+#help p{margin:0 0 10px;color:rgba(237,241,244,.86);max-width:62ch}
+#help dl{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;margin:12px 0;font-size:13px}
+#help dt{font:600 13px var(--f-label);letter-spacing:.04em;color:var(--accent);white-space:nowrap}
+#help dd{margin:0;color:rgba(237,241,244,.86)}
+#help .foot{font-size:12px;color:var(--ink-dim)}
+#help a{color:var(--accent)}
+#help-close{position:absolute;right:10px;top:10px;width:32px;height:32px;border-radius:8px;display:grid;place-items:center}
+#help-close:hover{background:rgba(255,255,255,.08)}
+#nogl{position:fixed;inset:0;display:grid;place-items:center;padding:24px;text-align:center;z-index:20;background:#11151a}
+@media (prefers-reduced-motion: reduce){ #hint{transition:none} }
+@media (max-width: 560px){
+  #pole-card{padding:8px 10px 7px}
+  #pole-name{font-size:18px}
+  #anti{margin-top:5px;padding-top:5px;font-size:11.5px}
+  .ctl{width:40px;height:40px}
+  #controls{gap:6px}
+}
+</style>
+</head>
+<body>
+<canvas id="gl" aria-label="Map. Drag to move, double-click to set the pole."></canvas>
+<canvas id="hud" aria-hidden="true"></canvas>
+
+<div id="pole-card" class="glass">
+  <button id="pole-btn" aria-label="Search for a place to use as the pole">
+    <span class="hint-search"><span class="eyebrow">Pole</span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></span>
+    <span id="pole-name">Finding place…</span>
+    <span id="pole-coords" class="num"></span>
+  </button>
+  <div id="search" hidden>
+    <span class="eyebrow">Move the pole to</span>
+    <input id="q" type="search" placeholder="A place, or lat, lon" autocomplete="off" spellcheck="false" enterkeyhint="go">
+    <ul id="results"></ul>
+  </div>
+  <div id="anti"><span>Far side</span><b id="anti-name">…</b></div>
+</div>
+
+<div id="controls">
+  <button class="ctl glass" id="locate-btn" title="Make my location the pole" aria-label="Make my location the pole">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+  <button class="ctl glass" id="layers-btn" title="Map style" aria-label="Map style" aria-haspopup="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
+  </button>
+  <button class="ctl glass" id="north-btn" title="Turn so north is up" aria-label="Turn so north is up">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 16 12h-8z" fill="#F0B44C"/><path d="M12 21.5 8 12h8z" fill="currentColor" opacity=".55"/></svg>
+  </button>
+  <button class="ctl glass" id="units-btn" title="Switch units" aria-label="Switch units">KM</button>
+  <button class="ctl glass" id="help-btn" title="How to read this map" aria-label="How to read this map">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.5v.6"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>
+  </button>
+</div>
+<div id="layer-menu" class="glass" role="menu" hidden></div>
+
+<div id="probe" class="glass" hidden>
+  <div class="pd"></div>
+  <div class="pc num"></div>
+  <button id="probe-go">Make this the pole</button>
+</div>
+
+<div id="hint" class="glass">Drag to travel · double-click any spot to make it the pole</div>
+<div id="attrib"></div>
+
+<div id="help" class="glass" role="dialog" aria-labelledby="help-title" hidden>
+  <button id="help-close" aria-label="Close">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+  </button>
+  <span class="eyebrow">How to read this map</span>
+  <h2 id="help-title">The whole planet, measured from one spot</h2>
+  <p>This is a Mercator map with its pole moved to a place you choose. Mercator enlarges land without limit as it nears the pole, so your chosen spot fills the bottom of the screen at street level, and everything else shrinks with distance until the far side of the Earth is a thin band at the top.</p>
+  <p>Each column is one compass direction from the pole, labelled along the top. Height is distance, read off the ruler on the right; every step up the same number of pixels multiplies the distance by the same factor. Shapes stay true everywhere. Only size changes.</p>
+  <dl>
+    <dt>Drag / scroll</dt><dd>Up and down travels away from or toward the pole. Sideways turns you around it.</dd>
+    <dt>Pinch / Ctrl + scroll</dt><dd>Widen or narrow the map.</dd>
+    <dt>Double-click</dt><dd>Fly there and make it the new pole. A single click shows the distance and direction.</dd>
+    <dt>Keys</dt><dd>Arrows move. Plus and minus widen or narrow. N turns north up. The slash key opens search.</dd>
+  </dl>
+  <p class="foot">A fresh take on Drew Roos's <a href="https://mrgris.com/projects/merc-extreme/" target="_blank" rel="noopener">Mercator: Extreme</a>. Map tiles from Esri, place search by Photon, place data © OpenStreetMap contributors.</p>
+</div>
+<div id="nogl" hidden><p>This map needs WebGL, which this browser has turned off.</p></div>
+
+<script>
+(() => {
+'use strict';
+// =====================================================================
+// Constants & small helpers
+// =====================================================================
+const R = 6371008.8, PI = Math.PI, TAU = 2 * PI, D2R = PI / 180, R2D = 180 / PI;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const wrapPi = a => a - TAU * Math.floor((a + PI) / TAU);          // -> [-π, π)
+const yOfC = c => Math.log(Math.tan(c / 2));                         // Mercator y from angular distance to pole
+const cOfY = y => 2 * Math.atan(Math.exp(y));
+const params = new URLSearchParams(location.search);
+const DEBUG = params.has('debug');
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const $ = id => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem('omphalos.' + k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem('omphalos.' + k, v); } catch (e) {} }
+};
+
+// =====================================================================
+// Geometry. The pole P is the projection's "south pole": bearing from P
+// becomes x, and y = ln tan(c/2) where c is the angular distance from P.
+// Everything here runs in float64 on the CPU, so precision holds to the
+// centimetre even at the bottom of the map.
+// =====================================================================
+let poleSeq = 0;
+function makePole(latDeg, lonDeg) {
+  lonDeg = ((lonDeg + 180) % 360 + 360) % 360 - 180;
+  latDeg = clamp(latDeg, -89.99999, 89.99999);
+  const f = latDeg * D2R, l = lonDeg * D2R;
+  return { latDeg, lonDeg, f, l, sf: Math.sin(f), cf: Math.cos(f), id: ++poleSeq };
+}
+function proj(P, f, l, out) {
+  const df = f - P.f, dl = l - P.l, sdf = Math.sin(df / 2), sdl = Math.sin(dl / 2), cf = Math.cos(f), s2 = sdl * sdl;
+  const a = sdf * sdf + P.cf * cf * s2;
+  out[0] = Math.atan2(Math.sin(dl) * cf, Math.sin(df) + 2 * P.sf * cf * s2);
+  const y = 0.5 * Math.log(a / (1 - a));
+  out[1] = y !== y ? 0 : clamp(y, -60, 60);
+  return out;
+}
+function dest(P, theta, c) {
+  const sc = Math.sin(c), cc = Math.cos(c);
+  const sf2 = clamp(P.sf * cc + P.cf * sc * Math.cos(theta), -1, 1);
+  const f2 = Math.asin(sf2);
+  const l2 = P.l + Math.atan2(Math.sin(theta) * sc * P.cf, cc - P.sf * sf2);
+  return [f2, wrapPi(l2)];
+}
+function angDist(f1, l1, f2, l2) {
+  const s1 = Math.sin((f2 - f1) / 2), s2 = Math.sin((l2 - l1) / 2);
+  const a = s1 * s1 + Math.cos(f1) * Math.cos(f2) * s2 * s2;
+  return 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
+}
+// Angular distance from point (f,l) to a lat/lon box (exact for boxes bounded by meridians and parallels)
+function boxDist(f, l, b) {
+  let d = l - b.w; d -= TAU * Math.floor(d / TAU);
+  if (d <= b.e - b.w) return Math.abs(f - clamp(f, b.s, b.n));
+  let best = Infinity;
+  for (const L of [b.w, b.e]) {
+    const dl = l - L;
+    let fs = Math.atan2(Math.sin(f), Math.cos(f) * Math.cos(dl));
+    fs = clamp(clamp(fs, -PI / 2, PI / 2), b.s, b.n);
+    const dd = angDist(f, l, fs, L);
+    if (dd < best) best = dd;
+  }
+  return best;
+}
+const tileLat = (y, z) => Math.atan(Math.sinh(PI * (1 - 2 * y / Math.pow(2, z))));
+function tileBox(z, x, y) {
+  const n = Math.pow(2, z);
+  return { w: x / n * TAU - PI, e: (x + 1) / n * TAU - PI, n: tileLat(y, z), s: tileLat(y + 1, z) };
+}
+const T2 = [0, 0];
+// Range of bearings from P covered by a box that does not contain P (sampled along the boundary)
+function bearingRange(P, b) {
+  const S = 5; let prev = null, acc = 0, mn = Infinity, mx = -Infinity;
+  const visit = (f, l) => {
+    const x = proj(P, f, l, T2)[0];
+    acc = prev === null ? x : acc + wrapPi(x - prev); prev = x;
+    if (acc < mn) mn = acc; if (acc > mx) mx = acc;
+  };
+  for (let i = 0; i < S; i++) visit(b.n, b.w + (b.e - b.w) * i / S);
+  for (let i = 0; i < S; i++) visit(b.n + (b.s - b.n) * i / S, b.e);
+  for (let i = 0; i < S; i++) visit(b.s, b.e + (b.w - b.e) * i / S);
+  for (let i = 0; i <= S; i++) visit(b.s + (b.n - b.s) * i / S, b.w);
+  return [mn, mx];
+}
+
+// =====================================================================
+// Map styles
+// =====================================================================
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
+const LAYERS = {
+  streets: { label: 'Streets', clear: [0.65, 0.75, 0.86], capN: [0.65, 0.75, 0.86], capS: [0.97, 0.97, 0.96],
+    sets: [{ id: 'esri-street', url: ESRI + 'World_Street_Map/MapServer/tile/{z}/{y}/{x}', px: 256, maxZ: 19 }],
+    attrib: 'Tiles © Esri · Esri, HERE, Garmin, USGS, © OpenStreetMap contributors' },
+  satellite: { label: 'Satellite', clear: [0.035, 0.07, 0.11], capN: [0.78, 0.82, 0.86], capS: [0.92, 0.93, 0.95],
+    sets: [{ id: 'esri-img', url: ESRI + 'World_Imagery/MapServer/tile/{z}/{y}/{x}', px: 256, maxZ: 19 },
+           { id: 'esri-ref', url: ESRI + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', px: 256, maxZ: 17, overlay: true }],
+    attrib: 'Imagery © Esri, Maxar, Earthstar Geographics · labels © Esri' },
+  topo: { label: 'Terrain', clear: [0.62, 0.77, 0.86], capN: [0.62, 0.77, 0.86], capS: [0.97, 0.97, 0.97],
+    sets: [{ id: 'esri-topo', url: ESRI + 'World_Topo_Map/MapServer/tile/{z}/{y}/{x}', px: 256, maxZ: 19 }],
+    attrib: 'Tiles © Esri · Esri, HERE, Garmin, USGS, © OpenStreetMap contributors' },
+  dark: { label: 'Night', clear: [0.13, 0.13, 0.14], capN: [0.13, 0.13, 0.14], capS: [0.2, 0.2, 0.21],
+    sets: [{ id: 'esri-dark', url: ESRI + 'Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', px: 256, maxZ: 16 },
+           { id: 'esri-dark-ref', url: ESRI + 'Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', px: 256, maxZ: 16, overlay: true }],
+    attrib: 'Tiles © Esri · Esri, HERE, Garmin, © OpenStreetMap contributors' },
+};
+if (DEBUG) LAYERS.debug = { label: 'Debug grid', clear: [0.2, 0.2, 0.25], capN: [0.35, 0.4, 0.7], capS: [0.7, 0.4, 0.35], sets: [{ id: 'debug', debug: true, px: 256, maxZ: 19 }], attrib: 'Procedural test tiles' };
+
+// =====================================================================
+// WebGL setup
+// =====================================================================
+const cv = $('gl'), hud = $('hud'), hctx = hud.getContext('2d');
+const gl = cv.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' })
+        || cv.getContext('webgl', { antialias: false, alpha: false });
+if (!gl) { $('nogl').hidden = false; return; }
+const isGL2 = typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext;
+const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
+const maxAniso = aniso ? Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 0;
+
+function shader(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, `
+attribute vec2 aPos; attribute vec2 aUV;
+uniform vec2 uOff; uniform float uS; uniform vec2 uView;
+varying vec2 vUV;
+void main(){
+  vec2 p = vec2(uOff.x + aPos.x * uS, uOff.y - aPos.y * uS);
+  gl_Position = vec4(p.x / uView.x * 2.0 - 1.0, 1.0 - p.y / uView.y * 2.0, 0.0, 1.0);
+  vUV = aUV;
+}`));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, `
+precision mediump float;
+uniform sampler2D uTex; uniform float uAlpha;
+varying vec2 vUV;
+void main(){ vec4 c = texture2D(uTex, vUV); gl_FragColor = vec4(c.rgb, c.a * uAlpha); }`));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const loc = {
+  aPos: gl.getAttribLocation(prog, 'aPos'), aUV: gl.getAttribLocation(prog, 'aUV'),
+  uOff: gl.getUniformLocation(prog, 'uOff'), uS: gl.getUniformLocation(prog, 'uS'),
+  uView: gl.getUniformLocation(prog, 'uView'), uAlpha: gl.getUniformLocation(prog, 'uAlpha'),
+  uTex: gl.getUniformLocation(prog, 'uTex'),
+};
+gl.enableVertexAttribArray(loc.aPos); gl.enableVertexAttribArray(loc.aUV);
+gl.uniform1i(loc.uTex, 0);
+gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+
+function uploadTexture(src) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  if (aniso) gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, maxAniso);
+  return t;
+}
+
+// =====================================================================
+// View state
+// =====================================================================
+const V = { heading: 0, yc: 0, s: 64, W: 1, H: 1, dpr: 1 };
+const safe = { t: 0, b: 0, l: 0, r: 0 };
+let pole = null;
+let layerKey = DEBUG ? 'debug' : (store.get('layer') in LAYERS ? store.get('layer') : 'streets');
+let units = store.get('units') || ((navigator.language || '').toLowerCase() === 'en-us' ? 'imperial' : 'metric');
+let dirty = true, viewDirty = true;
+const markDirty = () => { dirty = true; };
+const markView = () => { dirty = true; viewDirty = true; };
+
+function sMin() { return Math.min(V.W / TAU, V.H / 26); }
+function sMax() { return Math.max(V.W, V.H) / TAU * 48; }
+function baseSet() { return LAYERS[layerKey].sets[0]; }
+// y limits: stop where even the deepest tiles would be magnified ~2.5x
+function yLimits(P, s) {
+  const b = baseSet();
+  const sinLim = s * V.dpr * TAU * Math.max(0.05, P.cf) / (b.px * Math.pow(2, b.maxZ) * 2.5);
+  const lo = yOfC(Math.asin(Math.min(0.999, sinLim)));
+  return [lo, -lo];
+}
+function clampY(yc, P, s) {
+  const [lo, hi] = yLimits(P, s), half = V.H / 2 / s;
+  return hi - lo < 2 * half ? (lo + hi) / 2 : clamp(yc, lo + half, hi - half);
+}
+function clampView() {
+  V.s = clamp(V.s, sMin(), sMax());
+  V.yc = clampY(V.yc, pole, V.s);
+  V.heading = wrapPi(V.heading);
+}
+// Default framing: street level at the bottom, as much of the far side as fits above it
+function defaultYc(P, s) {
+  const half = V.H / (2 * s);
+  return clampY(Math.min(yOfC(120 / R) + half, 2.0 - half), P, s);
+}
+
+// =====================================================================
+// Tile sets, loading queue, cache
+// =====================================================================
+class TileSet {
+  constructor(def) { this.def = def; this.map = new Map(); }
+  url(z, x, y) {
+    let u = this.def.url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    if (this.def.sub) u = u.replace('{s}', this.def.sub[(x + y) % this.def.sub.length]);
+    return u;
+  }
+  get(z, x, y, create) {
+    const k = z + '/' + x + '/' + y;
+    let e = this.map.get(k);
+    if (!e && create) { e = { z, x, y, k, state: 0, tex: null, t: 0, used: 0, want: 0, ctrl: null, retry: 0, set: this }; this.map.set(k, e); }
+    return e;
+  }
+}
+const sets = new Map();
+function getSet(def) { let s = sets.get(def.id); if (!s) { s = new TileSet(def); sets.set(def.id, s); } return s; }
+
+const inflight = new Set();
+const MAX_INFLIGHT = 10;
+let frameNo = 0;
+
+function debugTile(z, x, y) {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = `hsl(${(x * 73 + y * 151 + z * 37) % 360} 42% 72%)`; g.fillRect(0, 0, 256, 256);
+  g.strokeStyle = 'rgba(0,0,0,.18)'; g.lineWidth = 1;
+  for (let i = 32; i < 256; i += 32) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 256); g.moveTo(0, i); g.lineTo(256, i); g.stroke(); }
+  g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 3; g.strokeRect(1.5, 1.5, 253, 253);
+  g.fillStyle = '#111'; g.font = 'bold 26px sans-serif'; g.fillText(`${z}/${x}/${y}`, 12, 36);
+  g.font = 'bold 54px sans-serif'; g.fillText('N↑', 82, 150);
+  g.font = 'bold 18px sans-serif'; g.fillText('WEST', 10, 236); g.fillText('EAST', 196, 236);
+  return c;
+}
+async function startLoad(e) {
+  e.state = 1; inflight.add(e); e.aborted = false;
+  const set = e.set;
+  try {
+    let src;
+    if (set.def.debug) {
+      await new Promise(r => setTimeout(r, 25 + Math.random() * 60));
+      if (e.aborted) throw new Error('aborted');
+      src = debugTile(e.z, e.x, e.y);
+    } else {
+      e.ctrl = new AbortController();
+      const r = await fetch(set.url(e.z, e.x, e.y), { signal: e.ctrl.signal, mode: 'cors', credentials: 'omit' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      src = await createImageBitmap(blob, { premultiplyAlpha: 'none' });
+    }
+    if (e.dead) { if (src.close) src.close(); return; }
+    e.tex = uploadTexture(src); if (src.close) src.close();
+    e.state = 2; e.t = performance.now();
+  } catch (err) {
+    if (e.aborted) e.state = 0;
+    else { e.state = 3; e.fails = (e.fails || 0) + 1; e.retry = performance.now() + 8000 * e.fails; }
+  } finally {
+    inflight.delete(e); e.ctrl = null; markDirty();
+  }
+}
+function pump(wanted) {
+  const now = performance.now();
+  wanted.sort((a, b) => a.p - b.p);
+  for (const w of wanted) {
+    if (inflight.size >= MAX_INFLIGHT) break;
+    const e = w.e;
+    if (e.state === 0 || (e.state === 3 && now > e.retry && e.fails < 4)) startLoad(e);
+  }
+  for (const e of inflight) {
+    if (frameNo - e.want > 30 && !e.aborted) { e.aborted = true; if (e.ctrl) e.ctrl.abort(); }
+  }
+}
+function evict() {
+  let ready = [];
+  for (const s of sets.values()) for (const e of s.map.values()) if (e.state === 2) ready.push(e);
+  const LIMIT = 280;
+  if (ready.length <= LIMIT) return;
+  ready.sort((a, b) => a.used - b.used);
+  for (let i = 0; i < ready.length - 220; i++) {
+    const e = ready[i]; if (e.used >= frameNo - 2) break;
+    gl.deleteTexture(e.tex); e.tex = null; e.state = 0; e.set.map.delete(e.k); e.dead = true;
+  }
+}
+
+// =====================================================================
+// Level-of-detail: walk the tile quadtree, refining any tile whose
+// pixels would be magnified on screen. Near the pole that drives the
+// tree to street level; toward the far side it stays coarse.
+// =====================================================================
+function viewGeom(Vw) {
+  const pad = 48 / Vw.s;
+  const yBot = Vw.yc - Vw.H / 2 / Vw.s - pad, yTop = Vw.yc + Vw.H / 2 / Vw.s + pad;
+  const halfW = Vw.W / 2 / Vw.s + pad;
+  return { yBot, yTop, cBot: cOfY(yBot), cTop: cOfY(yTop), halfW, fullW: halfW * 2 >= TAU };
+}
+const infoCache = new Map();  // key -> {poleId, ...}
+function tileInfo(P, z, x, y) {
+  const k = z + '/' + x + '/' + y;
+  let it = infoCache.get(k);
+  if (it && it.poleId === P.id) return it;
+  const b = tileBox(z, x, y);
+  const cmin = boxDist(P.f, P.l, b), cmax = PI - boxDist(-P.f, P.l + PI, b);
+  it = { poleId: P.id, z, x, y, k, b, cmin, cmax, hasPole: cmin < 1e-12, hasAnti: cmax > PI - 1e-12, br: null };
+  infoCache.set(k, it);
+  return it;
+}
+const MERC_MAX = Math.atan(Math.sinh(PI));
+function capInfo(P, north) {
+  const k = north ? 'capN' : 'capS';
+  let it = infoCache.get(k);
+  if (it && it.poleId === P.id) return it;
+  const b = north ? { w: -PI, e: PI, n: PI / 2, s: MERC_MAX } : { w: -PI, e: PI, n: -MERC_MAX, s: -PI / 2 };
+  const cmin = boxDist(P.f, P.l, b), cmax = PI - boxDist(-P.f, P.l + PI, b);
+  it = { poleId: P.id, z: -1, x: 0, y: 0, k, b, cap: true, cmin, cmax, hasPole: cmin < 1e-12, hasAnti: cmax > PI - 1e-12 };
+  infoCache.set(k, it);
+  return it;
+}
+const solidTex = new Map();
+function solid(rgb) {
+  const k = rgb.join(',');
+  let t = solidTex.get(k);
+  if (!t) {
+    t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([rgb[0] * 255, rgb[1] * 255, rgb[2] * 255, 255]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    solidTex.set(k, t);
+  }
+  return t;
+}
+function computeLeaves(P, Vw, def, threshIn) {
+  const G = viewGeom(Vw);
+  const k = Vw.s * Vw.dpr * TAU / def.px;
+  let thresh = threshIn || 1.15;
+  const leaves = [];
+  const rec = (z, x, y) => {
+    const it = tileInfo(P, z, x, y);
+    if (it.cmax < G.cBot || it.cmin > G.cTop) return;
+    if (!G.fullW && z >= 2 && !it.hasPole && !it.hasAnti) {
+      if (!it.br) it.br = bearingRange(P, it.b);
+      const span = it.br[1] - it.br[0];
+      if (span < PI) {
+        const mid = (it.br[0] + it.br[1]) / 2;
+        if (Math.abs(wrapPi(mid - Vw.heading)) > span / 2 + G.halfW + 0.02) return;
+      }
+    }
+    const c0 = Math.max(it.cmin, G.cBot), c1 = Math.min(it.cmax, G.cTop);
+    const smin = Math.max(1e-15, Math.min(Math.sin(c0), Math.sin(c1)));
+    const b = it.b;
+    const cosf = (b.s < 0 && b.n > 0) ? 1 : Math.cos(Math.min(Math.abs(b.s), Math.abs(b.n)));
+    const ratio = k * cosf / (Math.pow(2, z) * smin);
+    if (z < def.maxZ && (z < 2 || ratio > thresh)) {
+      rec(z + 1, 2 * x, 2 * y); rec(z + 1, 2 * x + 1, 2 * y);
+      rec(z + 1, 2 * x, 2 * y + 1); rec(z + 1, 2 * x + 1, 2 * y + 1);
+    } else leaves.push(it);
+  };
+  rec(0, 0, 0);
+  if (leaves.length > 360 && thresh < 8) return computeLeaves(P, Vw, def, thresh * 1.6);
+  return leaves;
+}
+
+// =====================================================================
+// Meshes: each tile is a grid warped through the projection in float64,
+// stored relative to its own origin so float32 never loses precision.
+// =====================================================================
+const meshes = new Map();
+let flying = false;
+function meshN(P, it) {
+  if (it.hasPole || it.hasAnti || it.cap) return flying ? 32 : 64;
+  const b = it.b, xs = [];
+  const fm = (b.n + b.s) / 2, lm = (b.w + b.e) / 2;
+  const xc = proj(P, fm, lm, T2)[0];
+  let mn = 0, mx = 0;
+  for (const [f, l] of [[b.n, b.w], [b.n, b.e], [b.s, b.w], [b.s, b.e], [b.n, lm], [b.s, lm], [fm, b.w], [fm, b.e]]) {
+    const d = wrapPi(proj(P, f, l, T2)[0] - xc); if (d < mn) mn = d; if (d > mx) mx = d;
+  }
+  const G = viewGeom(V);
+  const y0 = Math.max(yOfC(it.cmin), G.yBot - 2), y1 = Math.min(yOfC(it.cmax), G.yTop + 2);
+  const px = ((mx - mn) + Math.max(0, y1 - y0)) * V.s;
+  const steps = [2, 4, 6, 8, 12, 16, 24, 32, 48];
+  const want = px / 13;
+  let N = steps[steps.length - 1];
+  for (const s of steps) if (s >= want) { N = s; break; }
+  return flying ? Math.min(N, 24) : N;
+}
+function buildMesh(P, it, N) {
+  const n = Math.pow(2, it.z), G1 = N + 1;
+  const latAt = it.cap ? v => it.b.n + (it.b.s - it.b.n) * v
+                       : v => Math.atan(Math.sinh(PI * (1 - 2 * (it.y + v) / n)));
+  const lonAt = it.cap ? u => -PI + TAU * u : u => (it.x + u) / n * TAU - PI;
+  const ctr = proj(P, (it.b.n + it.b.s) / 2, (it.b.w + it.b.e) / 2, [0, 0]);
+  const yr = clamp(ctr[1], -40, 40);
+  const metersPerU = Math.max(1e-3, (it.b.e - it.b.w) * R * Math.cos(Math.min(Math.abs(it.b.n), Math.abs(it.b.s))));
+  let cap = N * N * 6 * 4 + 2400;
+  let out = new Float32Array(cap);
+  let o = 0, lxmin = Infinity, lxmax = -Infinity;
+  const vAt = (u, v) => { proj(P, latAt(v), lonAt(u), T2); return [T2[0], T2[1], u, v]; };
+  const grid = new Array(G1 * G1);
+  for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) grid[j * G1 + i] = vAt(i / N, j / N);
+  // each triangle is unwrapped on its own; one that still spans > 180° surrounds the pole and is dropped
+  const tri = (a, b, c) => {
+    const x0 = a[0], x1 = x0 + wrapPi(b[0] - x0), x2 = x0 + wrapPi(c[0] - x0);
+    const lo = Math.min(x0, x1, x2), hi = Math.max(x0, x1, x2);
+    if (hi - lo > PI) return;
+    if (o + 12 > cap) { cap *= 2; const nb = new Float32Array(cap); nb.set(out); out = nb; }
+    out[o++] = x0; out[o++] = a[1] - yr; out[o++] = a[2]; out[o++] = a[3];
+    out[o++] = x1; out[o++] = b[1] - yr; out[o++] = b[2]; out[o++] = b[3];
+    out[o++] = x2; out[o++] = c[1] - yr; out[o++] = c[2]; out[o++] = c[3];
+    if (lo < lxmin) lxmin = lo; if (hi > lxmax) lxmax = hi;
+  };
+  const turn = (a, b, c, d) => {
+    const x0 = a[0], d1 = wrapPi(b[0] - x0), d2 = wrapPi(c[0] - x0), d3 = wrapPi(d[0] - x0);
+    return Math.max(0, d1, d2, d3) - Math.min(0, d1, d2, d3);
+  };
+  // split any cell that turns through a wide angle as seen from the pole, until it is tiny
+  const cell = (a, b, c, d, depth) => {
+    const u0 = a[2], v0 = a[3], u1 = d[2], v1 = d[3];
+    if (depth < 46 && (u1 - u0) * metersPerU > 0.004 && turn(a, b, c, d) > 0.45) {
+      const um = (u0 + u1) / 2, vm = (v0 + v1) / 2;
+      const ab = vAt(um, v0), ac = vAt(u0, vm), m = vAt(um, vm), bd = vAt(u1, vm), cd = vAt(um, v1);
+      cell(a, ab, ac, m, depth + 1); cell(ab, b, m, bd, depth + 1);
+      cell(ac, m, c, cd, depth + 1); cell(m, bd, cd, d, depth + 1);
+    } else { tri(a, b, c); tri(c, b, d); }
+  };
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const q = j * G1 + i;
+    cell(grid[q], grid[q + 1], grid[q + G1], grid[q + G1 + 1], 0);
+  }
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, out.subarray(0, o), gl.STATIC_DRAW);
+  return { buf, count: o / 4, xr: 0, yr, lxmin, lxmax, poleId: P.id, N, used: frameNo };
+}
+function getMesh(P, it) {
+  const N = meshN(P, it);
+  let m = meshes.get(it.k);
+  if (m && m.poleId === P.id && m.N === N) { m.used = frameNo; return m; }
+  if (m) gl.deleteBuffer(m.buf);
+  m = buildMesh(P, it, N); meshes.set(it.k, m);
+  return m;
+}
+function sweepMeshes() {
+  for (const [k, m] of meshes) if (m.used < frameNo - 90 || (m.poleId !== pole.id && m.used < frameNo)) { gl.deleteBuffer(m.buf); meshes.delete(k); }
+  if (infoCache.size > 6000) infoCache.clear();
+}
+
+// =====================================================================
+// Render
+// =====================================================================
+let leavesBySet = new Map();
+let prefetch = null;   // {until, list:[{e}]}
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = window.innerWidth, H = window.innerHeight;
+  if (W === V.W && H === V.H && dpr === V.dpr) return false;
+  const first = V.W === 1;
+  V.W = W; V.H = H; V.dpr = dpr;
+  for (const c of [cv, hud]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+  const probeEl = document.createElement('div');
+  probeEl.style.cssText = 'position:fixed;visibility:hidden;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)';
+  document.body.appendChild(probeEl);
+  const cs = getComputedStyle(probeEl);
+  safe.t = parseFloat(cs.paddingTop) || 0; safe.r = parseFloat(cs.paddingRight) || 0;
+  safe.b = parseFloat(cs.paddingBottom) || 0; safe.l = parseFloat(cs.paddingLeft) || 0;
+  probeEl.remove();
+  if (!first) clampView();
+  markView();
+  return true;
+}
+
+function drawTileSet(set, wanted, isOverlay) {
+  const leaves = leavesBySet.get(set.def.id) || [];
+  const draw = new Map();
+  const now = performance.now();
+  const G = viewGeom(V);
+  for (const it of leaves) {
+    const e = set.get(it.z, it.x, it.y, true);
+    e.want = frameNo;
+    if (e.state === 2) { draw.set(e.k, [e, it]); continue; }
+    if (e.state !== 1) {
+      const ym = (Math.max(yOfC(Math.max(it.cmin, 1e-300)), G.yBot) + Math.min(yOfC(Math.min(it.cmax, PI - 1e-15)), G.yTop)) / 2;
+      wanted.push({ e, p: Math.abs(ym - V.yc) * V.s + it.z * 2 });
+    }
+    // fall back to the nearest loaded ancestor
+    let z = it.z, x = it.x, y = it.y, depth = 0;
+    while (z > 0) {
+      z--; x >>= 1; y >>= 1; depth++;
+      if (isOverlay && depth > 2) break;
+      const a = set.get(z, x, y, false);
+      if (a && a.state === 2) { if (!draw.has(a.k)) draw.set(a.k, [a, tileInfo(pole, z, x, y)]); break; }
+    }
+    // and to any loaded children (useful when zooming out)
+    if (it.z < set.def.maxZ) for (let c = 0; c < 4; c++) {
+      const cx = it.x * 2 + (c & 1), cy = it.y * 2 + (c >> 1);
+      const ch = set.get(it.z + 1, cx, cy, false);
+      if (ch && ch.state === 2) draw.set(ch.k, [ch, tileInfo(pole, it.z + 1, cx, cy)]);
+    }
+  }
+  if (!isOverlay) for (let z = 0; z <= 1; z++) {
+    const n = 1 << z;
+    for (let x = 0; x < n; x++) for (let y = 0; y < n; y++) {
+      const e = set.get(z, x, y, true); e.want = frameNo;
+      if (e.state !== 2) wanted.push({ e, p: -10 + z });
+    }
+  }
+  const list = [...draw.values()].sort((a, b) => a[0].z - b[0].z);
+  if (!isOverlay) {
+    const L = LAYERS[layerKey], G2 = viewGeom(V);
+    for (const north of [true, false]) {
+      const it = capInfo(pole, north);
+      if (it.cmax < G2.cBot || it.cmin > G2.cTop) continue;
+      list.unshift([{ z: -1, tex: solid(north ? L.capN : L.capS), t: 0, cap: true }, it]);
+    }
+  }
+  const vmin = V.heading - V.W / 2 / V.s, vmax = V.heading + V.W / 2 / V.s;
+  let fading = false;
+  for (const [e, it] of list) {
+    if (!e.cap) e.used = frameNo;
+    const m = getMesh(pole, it);
+    if (!m.count) continue;
+    const alpha = reduceMotion || e.cap ? 1 : Math.min(1, (now - e.t) / 220);
+    if (alpha < 1) fading = true;
+    gl.bindTexture(gl.TEXTURE_2D, e.tex);
+    gl.uniform1f(loc.uAlpha, alpha);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.buf);
+    gl.vertexAttribPointer(loc.aPos, 2, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 16, 8);
+    const k0 = Math.ceil((vmin - (m.xr + m.lxmax)) / TAU), k1 = Math.floor((vmax - (m.xr + m.lxmin)) / TAU);
+    const oy = V.H / 2 - (m.yr - V.yc) * V.s;
+    for (let k = k0; k <= k1; k++) {
+      gl.uniform2f(loc.uOff, (m.xr + k * TAU - V.heading) * V.s + V.W / 2, oy);
+      gl.drawArrays(gl.TRIANGLES, 0, m.count);
+    }
+  }
+  return fading;
+}
+
+function render(now) {
+  frameNo++;
+  const L = LAYERS[layerKey];
+  if (viewDirty) {
+    viewDirty = false;
+    leavesBySet = new Map();
+    for (const def of L.sets) leavesBySet.set(def.id, computeLeaves(pole, V, def));
+    scheduleSettle();
+  }
+  gl.viewport(0, 0, cv.width, cv.height);
+  gl.clearColor(L.clear[0], L.clear[1], L.clear[2], 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.uniform2f(loc.uView, V.W, V.H);
+  gl.uniform1f(loc.uS, V.s);
+  const wanted = [];
+  let fading = false;
+  for (const def of L.sets) fading = drawTileSet(getSet(def), wanted, !!def.overlay) || fading;
+  if (prefetch) {
+    if (now > prefetch.until) prefetch = null;
+    else for (const e of prefetch.list) { e.want = frameNo; if (e.state !== 2) wanted.push({ e, p: -5 + e.z * 0.01 }); }
+  }
+  pump(wanted);
+  evict();
+  sweepMeshes();
+  drawHUD();
+  if (fading) dirty = true;
+}
+
+// =====================================================================
+// Motion: drag inertia, tweens, and the fly-to animation
+// =====================================================================
+let inertia = null, tween = null, flight = null;
+function stopMotion() { inertia = null; tween = null; if (flight) endFlight(false); }
+
+function stepInertia(dt) {
+  if (!inertia) return false;
+  V.heading -= inertia.vx * dt / V.s;
+  const before = V.yc;
+  V.yc += inertia.vy * dt / V.s;
+  clampView();
+  if (Math.abs(V.yc - before - inertia.vy * dt / V.s) > 1e-9) inertia.vy = 0;
+  const k = Math.exp(-dt / 330);
+  inertia.vx *= k; inertia.vy *= k;
+  if (Math.hypot(inertia.vx, inertia.vy) < 0.02) inertia = null;
+  markView();
+  return true;
+}
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+function stepTween(now) {
+  if (!tween) return false;
+  const t = Math.min(1, (now - tween.t0) / tween.dur), u = ease(t);
+  V.heading = tween.h0 + tween.dh * u;
+  if (tween.y1 !== undefined) V.yc = tween.y0 + (tween.y1 - tween.y0) * u;
+  if (t >= 1) tween = null;
+  clampView(); markView();
+  return true;
+}
+function turnNorth() {
+  stopMotion();
+  tween = { t0: performance.now(), dur: reduceMotion ? 1 : 520, h0: V.heading, dh: wrapPi(0 - V.heading) };
+  markView();
+}
+
+function flyTo(latDeg, lonDeg, opts = {}) {
+  stopMotion();
+  const P0 = pole, target = makePole(latDeg, lonDeg);
+  const c01 = angDist(P0.f, P0.l, target.f, target.l);
+  const yEnd = defaultYc(target, V.s);
+  if (opts.label) pendingLabel = { id: target.id, name: opts.label };
+  if (c01 < 1e-9 || reduceMotion) {
+    pole = target; V.yc = yEnd;
+    V.heading = opts.northUp ? 0 : V.heading;
+    clampView(); markView(); poleSettled(); return;
+  }
+  const th01 = proj(P0, target.f, target.l, [0, 0])[0];
+  const xoff = wrapPi(th01 - V.heading);
+  const travelEnd = wrapPi(proj(target, P0.f, P0.l, [0, 0])[0] + PI);
+  const hEnd = opts.northUp ? 0 : travelEnd;
+  const cEnd = 0.3 / R;
+  const L0 = Math.log(c01), L1 = Math.log(cEnd);
+  flight = { P0, target, c01, th01, xoff, delta: wrapPi(hEnd - travelEnd), hEnd, y0: V.yc, yEnd, L0, L1,
+             t0: performance.now(), dur: clamp(420 + 70 * (L0 - L1), 700, 2000) };
+  flying = true;
+  nameSeq++;
+  $('pole-name').textContent = opts.label || 'Travelling…';
+  $('pole-coords').textContent = fmtLatLon(target.latDeg, target.lonDeg);
+  $('anti-name').textContent = '…';
+  // fetch the destination's tiles now so the landing is sharp
+  const endView = { heading: hEnd, yc: yEnd, s: V.s, W: V.W, H: V.H, dpr: V.dpr };
+  const list = [];
+  for (const def of LAYERS[layerKey].sets) {
+    const set = getSet(def);
+    for (const it of computeLeaves(target, endView, def)) list.push(set.get(it.z, it.x, it.y, true));
+  }
+  prefetch = { until: performance.now() + flight.dur + 3000, list };
+  hideProbe();
+  markView();
+}
+function stepFlight(now) {
+  if (!flight) return false;
+  const F = flight, t = (now - F.t0) / F.dur;
+  if (t >= 1) { endFlight(true); return true; }
+  const u = ease(t);
+  const remaining = Math.exp(F.L0 + (F.L1 - F.L0) * u);
+  const [f, l] = dest(F.P0, F.th01, F.c01 - remaining);
+  pole = makePole(f * R2D, l * R2D);
+  const trav = proj(pole, F.target.f, F.target.l, T2)[0];
+  V.heading = wrapPi(trav - F.xoff * (1 - u) + F.delta * u);
+  V.yc = F.y0 + (F.yEnd - F.y0) * u;
+  markView();
+  return true;
+}
+function endFlight(arrived) {
+  const F = flight; flight = null; flying = false;
+  if (arrived) { pole = F.target; V.heading = F.hEnd; V.yc = F.yEnd; }
+  clampView(); markView(); poleSettled();
+}
+
+let last = performance.now();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(50, now - last); last = now;
+  resize();
+  const moving = stepFlight(now) | stepTween(now) | stepInertia(dt);
+  if (!dirty && !moving) return;
+  dirty = false;
+  const t0 = performance.now();
+  render(now);
+  stats.ms = stats.ms * 0.9 + (performance.now() - t0) * 0.1; stats.max = Math.max(stats.max, performance.now() - t0);
+}
+const stats = { ms: 0, max: 0 };
+
+// =====================================================================
+// HUD: compass of bearings, log distance ruler, the 90° line
+// =====================================================================
+const POINTS16 = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+const dirName = rad => POINTS16[Math.round(((rad * R2D) % 360 + 360) % 360 / 22.5) % 16];
+function fmtDist(m, short) {
+  if (units === 'imperial') {
+    const ft = m * 3.28084;
+    if (ft < 1000) return (ft < 10 ? ft.toFixed(1) : Math.round(ft).toLocaleString('en-US')) + ' ft';
+    const mi = m / 1609.344;
+    return (mi < 10 ? mi.toFixed(short ? 1 : 2) : mi < 100 ? mi.toFixed(1) : Math.round(mi).toLocaleString('en-US')) + ' mi';
+  }
+  if (m < 1000) return (m < 10 ? m.toFixed(1) : Math.round(m).toString()) + ' m';
+  const km = m / 1000;
+  return (km < 10 ? km.toFixed(short ? 1 : 2) : km < 100 ? km.toFixed(1) : Math.round(km).toLocaleString('en-US')) + ' km';
+}
+function rulerTicks() {
+  const t = [];
+  if (units === 'imperial') {
+    for (const v of [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]) t.push({ m: v / 3.28084, lab: v.toLocaleString('en-US') + ' ft', lvl: lvlOf(v) });
+    for (let e = 0; e <= 4; e++) for (const k of [1, 2, 5]) { const v = k * Math.pow(10, e); if (v <= 12000) t.push({ m: v * 1609.344, lab: v.toLocaleString('en-US') + ' mi', lvl: lvlOf(k) }); }
+  } else {
+    for (let e = 0; e <= 7; e++) for (const k of [1, 2, 5]) {
+      const v = k * Math.pow(10, e); if (v > 2e7) continue;
+      t.push({ m: v, lab: v < 1000 ? v + ' m' : (v / 1000).toLocaleString('en-US') + ' km', lvl: lvlOf(k) });
+    }
+  }
+  return t.sort((a, b) => a.lvl - b.lvl);
+}
+function lvlOf(v) { const k = v / Math.pow(10, Math.floor(Math.log10(v) + 1e-9)); return k === 1 ? 0 : k === 5 ? 1 : 2; }
+const screenYofY = y => V.H / 2 - (y - V.yc) * V.s;
+
+function drawHUD() {
+  const c = hctx, W = V.W, H = V.H;
+  c.setTransform(V.dpr, 0, 0, V.dpr, 0, 0);
+  c.clearRect(0, 0, W, H);
+  const compassH = 26, top = safe.t;
+  const rulerW = 74, rx = W - safe.r;            // ruler's right edge
+  const lineX = rx - 9;
+
+  // --- when one turn around the pole is narrower than the screen, dim the repeats
+  const turn = TAU * V.s;
+  if (turn < W) {
+    c.fillStyle = 'rgba(9,11,15,.5)';
+    const a = W / 2 - turn / 2, b2 = W / 2 + turn / 2;
+    c.fillRect(0, 0, a, H); c.fillRect(b2, 0, W - b2, H);
+    c.strokeStyle = 'rgba(237,241,244,.28)'; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(Math.round(a) + .5, 0); c.lineTo(Math.round(a) + .5, H); c.moveTo(Math.round(b2) + .5, 0); c.lineTo(Math.round(b2) + .5, H); c.stroke();
+  }
+  // --- 90° line: everything above it is on the far hemisphere
+  const yq = screenYofY(0);
+  if (yq > top + compassH && yq < H) {
+    c.save();
+    c.strokeStyle = 'rgba(240,180,76,.55)'; c.lineWidth = 1; c.setLineDash([2, 5]);
+    c.beginPath(); c.moveTo(0, Math.round(yq) + .5); c.lineTo(rx - rulerW, Math.round(yq) + .5); c.stroke();
+    c.restore();
+  }
+
+  // --- ruler band
+  const grad = c.createLinearGradient(rx - rulerW - 18, 0, rx, 0);
+  grad.addColorStop(0, 'rgba(15,19,25,0)'); grad.addColorStop(0.3, 'rgba(15,19,25,.62)'); grad.addColorStop(1, 'rgba(15,19,25,.82)');
+  c.fillStyle = grad; c.fillRect(rx - rulerW - 18, top + compassH, rulerW + 18 + safe.r, H - top - compassH);
+  c.strokeStyle = 'rgba(237,241,244,.35)'; c.lineWidth = 1;
+  c.beginPath(); c.moveTo(lineX + .5, top + compassH); c.lineTo(lineX + .5, H); c.stroke();
+
+  const minY = top + compassH + 40, maxY = H - safe.b - 40;
+  const placed = [];
+  c.font = '500 12px "Barlow Condensed", "Arial Narrow", sans-serif';
+  c.textAlign = 'right'; c.textBaseline = 'middle';
+  // the quarter-way mark first
+  const qm = { m: PI / 2 * R, special: true };
+  const all = [qm, ...rulerTicks()];
+  for (const t of all) {
+    const sy = screenYofY(yOfC(t.m / R));
+    if (sy < minY || sy > maxY) continue;
+    if (placed.some(p => Math.abs(p - sy) < (t.special ? 0 : 19))) continue;
+    placed.push(sy);
+    const yy = Math.round(sy) + .5;
+    if (t.special) {
+      c.strokeStyle = '#F0B44C'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(lineX - 9, yy); c.lineTo(lineX + 6, yy); c.stroke();
+      c.fillStyle = '#F0B44C'; c.font = '600 12px "Barlow Condensed", "Arial Narrow", sans-serif';
+      c.fillText('90° AWAY', lineX - 13, yy);
+      c.font = '500 12px "Barlow Condensed", "Arial Narrow", sans-serif';
+    } else {
+      c.strokeStyle = t.lvl === 0 ? 'rgba(237,241,244,.9)' : 'rgba(237,241,244,.55)'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(lineX - (t.lvl === 0 ? 7 : 4), yy); c.lineTo(lineX + 3, yy); c.stroke();
+      c.fillStyle = t.lvl === 0 ? 'rgba(237,241,244,.95)' : 'rgba(237,241,244,.66)';
+      c.fillText(t.lab, lineX - 11, yy);
+    }
+  }
+  // minor log ticks for texture
+  c.strokeStyle = 'rgba(237,241,244,.22)';
+  const yLo = V.yc - H / 2 / V.s, yHi = V.yc + H / 2 / V.s;
+  const dLo = Math.max(0.01, R * cOfY(yLo)), dHi = R * cOfY(yHi);
+  for (let e = Math.floor(Math.log10(dLo)); e <= Math.ceil(Math.log10(dHi)); e++) for (let k = 1; k < 10; k++) {
+    const m = k * Math.pow(10, e); if (m > PI * R) break;
+    const sy = screenYofY(yOfC(m / R)); if (sy < top + compassH || sy > H) continue;
+    c.beginPath(); c.moveTo(lineX, Math.round(sy) + .5); c.lineTo(lineX + 4, Math.round(sy) + .5); c.stroke();
+  }
+  // bottom: distance to the pole at the screen's bottom edge
+  const dBottom = R * cOfY(yLo);
+  const dTop = R * cOfY(Math.min(yHi, 60));
+  c.textAlign = 'right';
+  c.fillStyle = '#F0B44C'; c.font = '600 11px "Barlow Condensed", "Arial Narrow", sans-serif';
+  c.fillText('POLE ↓', lineX - 6, H - safe.b - 22);
+  c.fillStyle = 'rgba(237,241,244,.95)'; c.font = '500 11px "IBM Plex Mono", ui-monospace, monospace';
+  c.fillText(fmtDist(dBottom, true), lineX - 6, H - safe.b - 9);
+  c.fillStyle = 'rgba(237,241,244,.66)'; c.font = '600 11px "Barlow Condensed", "Arial Narrow", sans-serif';
+  c.fillText('FAR SIDE ↑', lineX - 6, top + compassH + 11);
+  c.fillStyle = 'rgba(237,241,244,.95)'; c.font = '500 11px "IBM Plex Mono", ui-monospace, monospace';
+  c.fillText(fmtDist(dTop, true), lineX - 6, top + compassH + 24);
+
+  // --- compass strip: which direction from the pole each column faces
+  c.fillStyle = 'rgba(15,19,25,.86)'; c.fillRect(0, 0, W, top + compassH);
+  c.strokeStyle = 'rgba(237,241,244,.16)'; c.beginPath(); c.moveTo(0, top + compassH + .5); c.lineTo(W, top + compassH + .5); c.stroke();
+  const pxPerDeg = V.s * D2R;
+  const tickStep = pxPerDeg * 5 >= 9 ? 5 : pxPerDeg * 11.25 >= 7 ? 11.25 : 22.5;
+  const by = top + compassH;
+  c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+  const xs = deg => {
+    const base = W / 2 + wrapPi(deg * D2R - V.heading) * V.s, out = [];
+    const span = TAU * V.s;
+    for (let x = base - Math.ceil(base / span) * span; x < W + 40; x += span) if (x > -40) out.push(x);
+    return out;
+  };
+  for (let d = 0; d < 360; d += tickStep) {
+    const major = d % 90 === 0, mid = d % 45 === 0;
+    for (const x of xs(d)) {
+      c.strokeStyle = major ? 'rgba(237,241,244,.9)' : mid ? 'rgba(237,241,244,.6)' : 'rgba(237,241,244,.3)';
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(Math.round(x) + .5, by); c.lineTo(Math.round(x) + .5, by - (major ? 7 : mid ? 5 : 3)); c.stroke();
+    }
+  }
+  const labelEvery = pxPerDeg * 22.5 >= 34 ? 22.5 : pxPerDeg * 45 >= 30 ? 45 : 90;
+  for (let d = 0; d < 360; d += labelEvery) {
+    const name = POINTS16[Math.round(d / 22.5) % 16];
+    for (const x of xs(d)) {
+      c.font = (d % 90 === 0 ? '600 14px' : '500 12px') + ' "Barlow Condensed", "Arial Narrow", sans-serif';
+      c.fillStyle = d === 0 ? '#F0B44C' : d % 90 === 0 ? 'rgba(237,241,244,.95)' : 'rgba(237,241,244,.62)';
+      c.fillText(name, x, by - 9);
+    }
+  }
+  if (pxPerDeg * 10 >= 34) {
+    c.font = '400 10px "IBM Plex Mono", ui-monospace, monospace'; c.fillStyle = 'rgba(237,241,244,.5)';
+    for (let d = 0; d < 360; d += 10) if (d % 45 !== 0) for (const x of xs(d)) c.fillText(d + '°', x, by - 9);
+  }
+
+  // north needle on the control
+  northSvg.style.transform = `rotate(${-V.heading * R2D}deg)`;
+}
+
+// =====================================================================
+// Input
+// =====================================================================
+const pts = new Map();
+let gesture = null, samples = [];
+function screenToGeo(x, y) {
+  const bx = V.heading + (x - V.W / 2) / V.s, my = V.yc + (V.H / 2 - y) / V.s;
+  const c = cOfY(my);
+  const [f, l] = dest(pole, bx, c);
+  return { f, l, c, bearing: bx };
+}
+function zoomAt(px, py, factor) {
+  const ax = V.heading + (px - V.W / 2) / V.s, ay = V.yc + (V.H / 2 - py) / V.s;
+  V.s = clamp(V.s * factor, sMin(), sMax());
+  V.heading = ax - (px - V.W / 2) / V.s; V.yc = ay - (V.H / 2 - py) / V.s;
+  clampView(); markView();
+}
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  stopMotion(); hideHint(); closeMenus();
+  if (e.pointerType === 'mouse' && !probePinned) hideProbe();
+  if (pts.size === 1) {
+    gesture = { type: 'drag', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now(), moved: 0, pt: e.pointerType };
+    samples = [{ x: e.clientX, y: e.clientY, t: performance.now() }];
+    cv.classList.add('dragging');
+  } else if (pts.size === 2) startPinch();
+});
+function startPinch() {
+  const [a, b] = [...pts.values()];
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  gesture = { type: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: V.s,
+              ax: V.heading + (mx - V.W / 2) / V.s, ay: V.yc + (V.H / 2 - my) / V.s, moved: 999 };
+}
+cv.addEventListener('pointermove', e => {
+  if (!pts.has(e.pointerId)) { if (e.pointerType === 'mouse' && !probePinned && !flight) showProbe(e.clientX, e.clientY, false); return; }
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (!gesture) return;
+  if (gesture.type === 'drag') {
+    const dx = e.clientX - gesture.x, dy = e.clientY - gesture.y;
+    gesture.x = e.clientX; gesture.y = e.clientY;
+    gesture.moved += Math.abs(dx) + Math.abs(dy);
+    if (gesture.moved > 6 && probeEl.hidden === false && !probePinned) hideProbe();
+    V.heading -= dx / V.s; V.yc += dy / V.s;
+    clampView(); markView();
+    const t = performance.now();
+    samples.push({ x: e.clientX, y: e.clientY, t });
+    while (samples.length > 2 && t - samples[0].t > 90) samples.shift();
+  } else if (gesture.type === 'pinch' && pts.size >= 2) {
+    const [a, b] = [...pts.values()];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    V.s = clamp(gesture.s0 * Math.hypot(a.x - b.x, a.y - b.y) / gesture.d0, sMin(), sMax());
+    V.heading = gesture.ax - (mx - V.W / 2) / V.s; V.yc = gesture.ay - (V.H / 2 - my) / V.s;
+    clampView(); markView();
+  }
+});
+function endPointer(e) {
+  if (!pts.has(e.pointerId)) return;
+  pts.delete(e.pointerId);
+  if (!gesture) return;
+  if (gesture.type === 'pinch') {
+    if (pts.size === 1) { const p = [...pts.values()][0]; gesture = { type: 'drag', x: p.x, y: p.y, moved: 999, t0: 0 }; samples = [{ x: p.x, y: p.y, t: performance.now() }]; }
+    else if (pts.size === 0) { gesture = null; cv.classList.remove('dragging'); }
+    return;
+  }
+  if (pts.size === 0) {
+    cv.classList.remove('dragging');
+    const g = gesture; gesture = null;
+    if (g.moved < 8 && performance.now() - g.t0 < 600 && e.type === 'pointerup') { tap(e.clientX, e.clientY, g.pt); return; }
+    const t = performance.now();
+    while (samples.length > 2 && t - samples[0].t > 90) samples.shift();
+    const s0 = samples[0], s1 = samples[samples.length - 1];
+    const dt = s1.t - s0.t;
+    if (dt > 8 && t - s1.t < 60) {
+      const vx = (s1.x - s0.x) / dt, vy = (s1.y - s0.y) / dt;
+      if (Math.hypot(vx, vy) > 0.08 && !reduceMotion) inertia = { vx, vy };
+    }
+  }
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', endPointer);
+cv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !probePinned) hideProbe(); });
+cv.addEventListener('wheel', e => {
+  e.preventDefault(); stopMotion(); hideHint(); if (!probePinned) hideProbe();
+  const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? V.H : 1;
+  if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * k * 0.004));
+  else {
+    let dx = e.deltaX * k, dy = e.deltaY * k;
+    if (e.shiftKey && !dx) { dx = dy; dy = 0; }
+    V.heading += dx / V.s; V.yc -= dy / V.s;
+    clampView(); markView();
+  }
+}, { passive: false });
+document.addEventListener('gesturestart', e => e.preventDefault());
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+let lastTap = null, tapTimer = 0;
+function tap(x, y) {
+  const now = performance.now();
+  if (lastTap && now - lastTap.t < 330 && Math.hypot(x - lastTap.x, y - lastTap.y) < 30) {
+    clearTimeout(tapTimer); lastTap = null;
+    const g = screenToGeo(x, y);
+    flyTo(g.f * R2D, g.l * R2D);
+    return;
+  }
+  lastTap = { x, y, t: now };
+  clearTimeout(tapTimer);
+  tapTimer = setTimeout(() => {
+    lastTap = null;
+    if (probePinned) hideProbe(); else showProbe(x, y, true);
+  }, 300);
+}
+
+window.addEventListener('keydown', e => {
+  if (e.target === q) return;
+  const step = 60 / V.s;
+  let handled = true;
+  switch (e.key) {
+    case 'ArrowUp': V.yc += step; break;
+    case 'ArrowDown': V.yc -= step; break;
+    case 'ArrowLeft': V.heading -= step; break;
+    case 'ArrowRight': V.heading += step; break;
+    case '+': case '=': zoomAt(V.W / 2, V.H / 2, 1.25); break;
+    case '-': case '_': zoomAt(V.W / 2, V.H / 2, 0.8); break;
+    case 'n': case 'N': turnNorth(); break;
+    case '/': openSearch(); break;
+    case 'Escape': closeMenus(); hideProbe(); $('help').hidden = true; closeSearch(); break;
+    default: handled = false;
+  }
+  if (handled) { e.preventDefault(); stopMotionSoft(); clampView(); markView(); hideHint(); }
+});
+function stopMotionSoft() { inertia = null; }
+
+// =====================================================================
+// Probe (distance & direction readout)
+// =====================================================================
+const probeEl = $('probe');
+let probePinned = false, probeGeo = null;
+function showProbe(x, y, pinned) {
+  const g = screenToGeo(x, y);
+  if (g.c * R < 0.05) return;
+  probeGeo = g;
+  probeEl.querySelector('.pd').textContent = `${fmtDist(g.c * R)} ${dirName(g.bearing)} of the pole`;
+  const lat = g.f * R2D, lon = g.l * R2D;
+  probeEl.querySelector('.pc').textContent = `${Math.abs(lat).toFixed(5)}° ${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(5)}° ${lon >= 0 ? 'E' : 'W'}`;
+  probePinned = pinned;
+  probeEl.classList.toggle('pinned', pinned);
+  probeEl.hidden = false;
+  const r = probeEl.getBoundingClientRect();
+  let px = x + 16, py = y + 16;
+  if (px + r.width > V.W - 80) px = x - 16 - r.width;
+  if (py + r.height > V.H - 10) py = y - 16 - r.height;
+  probeEl.style.transform = `translate(${Math.max(8, px)}px, ${Math.max(36, py)}px)`;
+}
+function hideProbe() { probeEl.hidden = true; probePinned = false; }
+$('probe-go').addEventListener('click', () => { if (probeGeo) flyTo(probeGeo.f * R2D, probeGeo.l * R2D); hideProbe(); });
+
+// =====================================================================
+// Pole card: naming the pole and its far side, search
+// =====================================================================
+const q = $('q'), results = $('results');
+let pendingLabel = null;
+const fmtLatLon = (lat, lon) => `${Math.abs(lat).toFixed(5)}° ${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(5)}° ${lon >= 0 ? 'E' : 'W'}`;
+function placeLabel(p) {
+  const local = p.city || p.town || p.village || p.district || p.locality || p.county;
+  const parts = [];
+  if (p.name && p.name !== local && p.type !== 'house' && p.type !== 'street') parts.push(p.name);
+  if (local) parts.push(local);
+  const region = p.state || p.country;
+  if (region && !parts.includes(region)) parts.push(region);
+  return parts.slice(0, 2).join(', ') || p.country || '';
+}
+async function reverseName(lat, lon) {
+  try {
+    const r = await fetch(`https://photon.komoot.io/reverse?lat=${lat.toFixed(6)}&lon=${lon.toFixed(6)}&lang=en&limit=1`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const p = j.features && j.features[0] && j.features[0].properties;
+    return p ? placeLabel(p) : '';
+  } catch (e) { return null; }
+}
+let nameSeq = 0;
+async function updatePoleCard() {
+  const P = pole, my = ++nameSeq;
+  $('pole-coords').textContent = fmtLatLon(P.latDeg, P.lonDeg);
+  const aLat = -P.latDeg, aLon = P.lonDeg > 0 ? P.lonDeg - 180 : P.lonDeg + 180;
+  if (pendingLabel && pendingLabel.id === P.id) $('pole-name').textContent = pendingLabel.name;
+  else {
+    $('pole-name').textContent = 'Finding place…';
+    const n = await reverseName(P.latDeg, P.lonDeg);
+    if (my !== nameSeq) return;
+    $('pole-name').textContent = n === null ? fmtShort(P.latDeg, P.lonDeg) : (n || 'Open water');
+  }
+  $('anti-name').textContent = fmtShort(aLat, aLon);
+  const an = await reverseName(aLat, aLon);
+  if (my !== nameSeq) return;
+  $('anti-name').textContent = an ? an : (an === '' ? 'Open ocean · ' : '') + fmtShort(aLat, aLon);
+}
+const fmtShort = (lat, lon) => `${Math.abs(lat).toFixed(2)}° ${lat >= 0 ? 'N' : 'S'} ${Math.abs(lon).toFixed(2)}° ${lon >= 0 ? 'E' : 'W'}`;
+
+let settleTimer = 0, lastSettledPole = -1;
+function scheduleSettle() {
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => {
+    if (flight) return;
+    try { history.replaceState(null, '', '#' + pole.latDeg.toFixed(5) + ',' + pole.lonDeg.toFixed(5)); } catch (e) {}
+  }, 400);
+}
+function poleSettled() {
+  if (lastSettledPole === pole.id) return;
+  lastSettledPole = pole.id;
+  updatePoleCard();
+  scheduleSettle();
+}
+
+function openSearch() {
+  $('pole-btn').hidden = true; $('search').hidden = false; $('anti').hidden = true;
+  q.value = ''; results.innerHTML = ''; q.focus();
+}
+function closeSearch() { $('pole-btn').hidden = false; $('search').hidden = true; $('anti').hidden = false; }
+$('pole-btn').addEventListener('click', openSearch);
+let searchTimer = 0, searchSeq = 0, hits = [], sel = -1;
+q.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 260); });
+q.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeSearch(); e.stopPropagation(); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); if (!hits.length) return;
+    sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + hits.length) % hits.length; paintResults();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const ll = parseLatLon(q.value);
+    if (ll) { choose({ lat: ll[0], lon: ll[1], name: fmtShort(ll[0], ll[1]) }); return; }
+    if (hits.length) choose(hits[Math.max(0, sel)]); else runSearch(true);
+  }
+});
+q.addEventListener('blur', () => setTimeout(() => { if (!$('search').contains(document.activeElement)) closeSearch(); }, 180));
+function parseLatLon(s) {
+  const m = s.trim().match(/^(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  const lat = +m[1], lon = +m[2];
+  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : null;
+}
+async function runSearch(chooseFirst) {
+  const text = q.value.trim(), my = ++searchSeq;
+  if (!text) { hits = []; results.innerHTML = ''; return; }
+  const ll = parseLatLon(text);
+  if (ll) { hits = [{ lat: ll[0], lon: ll[1], name: fmtShort(ll[0], ll[1]), sub: 'Coordinates' }]; sel = 0; paintResults(); return; }
+  try {
+    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&limit=10&lang=en`);
+    const j = await r.json();
+    if (my !== searchSeq) return;
+    hits = (j.features || []).map(f => {
+      const p = f.properties;
+      const sub = [p.city || p.town || p.village || p.county, p.state, p.country].filter((v, i, a) => v && v !== p.name && a.indexOf(v) === i).join(', ');
+      return { lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0], name: p.name || sub, sub, label: [p.name, p.state || p.country].filter(Boolean).join(', ') };
+    }).filter((h, i, all) => all.findIndex(o => o.name === h.name && o.sub === h.sub) === i).slice(0, 6);
+    sel = hits.length ? 0 : -1;
+    paintResults(hits.length ? null : 'No places found. Try a nearby town, or type coordinates.');
+    if (chooseFirst && hits.length) choose(hits[0]);
+  } catch (e) {
+    if (my === searchSeq) { hits = []; paintResults('Search is unreachable right now. Coordinates still work, like 48.858, 2.294'); }
+  }
+}
+function paintResults(msg) {
+  results.innerHTML = '';
+  if (msg) { const li = document.createElement('li'); li.className = 'msg'; li.textContent = msg; results.appendChild(li); return; }
+  hits.forEach((h, i) => {
+    const li = document.createElement('li'), b = document.createElement('button');
+    b.type = 'button'; if (i === sel) b.className = 'sel';
+    const n = document.createElement('span'); n.className = 'rn'; n.textContent = h.name;
+    const s = document.createElement('span'); s.className = 'rs'; s.textContent = h.sub || '';
+    b.append(n, s);
+    b.addEventListener('mousedown', ev => ev.preventDefault());
+    b.addEventListener('click', () => choose(h));
+    li.appendChild(b); results.appendChild(li);
+  });
+}
+function choose(h) {
+  closeSearch(); q.blur();
+  flyTo(h.lat, h.lon, { northUp: true, label: h.label || h.name });
+}
+
+// =====================================================================
+// Controls
+// =====================================================================
+const northSvg = $('north-btn').querySelector('svg');
+$('north-btn').addEventListener('click', turnNorth);
+const unitsBtn = $('units-btn');
+function paintUnits() { unitsBtn.textContent = units === 'imperial' ? 'MI' : 'KM'; unitsBtn.title = units === 'imperial' ? 'Showing miles and feet. Switch to metric.' : 'Showing kilometres. Switch to miles.'; }
+unitsBtn.addEventListener('click', () => { units = units === 'imperial' ? 'metric' : 'imperial'; store.set('units', units); paintUnits(); markDirty(); if (probeEl.hidden === false && probeGeo) hideProbe(); });
+const menu = $('layer-menu');
+function paintMenu() {
+  menu.innerHTML = '';
+  for (const [k, L] of Object.entries(LAYERS)) {
+    const b = document.createElement('button');
+    b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', String(k === layerKey));
+    const d = document.createElement('span'); d.className = 'dot';
+    b.append(d, document.createTextNode(L.label));
+    b.addEventListener('click', () => { setLayer(k); menu.hidden = true; });
+    menu.appendChild(b);
+  }
+}
+function setLayer(k) {
+  layerKey = k; if (!DEBUG) store.set('layer', k);
+  $('attrib').textContent = LAYERS[k].attrib;
+  paintMenu(); clampView(); markView();
+}
+$('layers-btn').addEventListener('click', e => { e.stopPropagation(); menu.hidden = !menu.hidden; if (!menu.hidden) paintMenu(); });
+function closeMenus() { menu.hidden = true; }
+document.addEventListener('pointerdown', e => { if (!menu.hidden && !menu.contains(e.target) && e.target !== $('layers-btn')) closeMenus(); });
+$('help-btn').addEventListener('click', () => { $('help').hidden = !$('help').hidden; hideHint(); });
+$('help-close').addEventListener('click', () => { $('help').hidden = true; });
+$('locate-btn').addEventListener('click', () => {
+  if (!navigator.geolocation) { toast('This browser cannot share its location.'); return; }
+  toast('Finding you…', true);
+  navigator.geolocation.getCurrentPosition(
+    p => { hideHint(); flyTo(p.coords.latitude, p.coords.longitude, { northUp: true }); },
+    err => toast(err.code === 1 ? 'Location is blocked for this page. Allow it in the browser, or search for your town instead.' : 'Could not find your location just now.'),
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+});
+const hintEl = $('hint');
+let hintTimer = 0;
+function hideHint() { hintEl.classList.add('gone'); }
+function toast(msg, sticky) {
+  hintEl.textContent = msg; hintEl.classList.remove('gone');
+  clearTimeout(hintTimer); if (!sticky) hintTimer = setTimeout(hideHint, 4200);
+}
+setTimeout(() => { if (!hintEl.classList.contains('gone') && hintEl.textContent.startsWith('Drag')) hideHint(); }, 14000);
+if (matchMedia('(pointer: coarse)').matches) hintEl.textContent = 'Drag to travel. Double-tap any spot to make it the pole.';
+
+// =====================================================================
+// Start
+// =====================================================================
+function parseHash() {
+  const h = decodeURIComponent(location.hash.slice(1));
+  const m = h.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  return m ? [clamp(+m[1], -89.99, 89.99), +m[2]] : null;
+}
+window.addEventListener('hashchange', () => {
+  const ll = parseHash();
+  if (ll && (Math.abs(ll[0] - pole.latDeg) > 1e-5 || Math.abs(ll[1] - pole.lonDeg) > 1e-5)) flyTo(ll[0], ll[1], { northUp: true });
+});
+
+const start = parseHash() || [42.26324, -71.73439];
+pole = makePole(start[0], start[1]);
+resize();
+V.s = clamp(Math.min(V.W / TAU, V.H / 12.5), sMin(), sMax());
+V.yc = defaultYc(pole, V.s);
+clampView();
+paintUnits(); setLayer(layerKey);
+poleSettled();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(markDirty);
+requestAnimationFrame(frame);
+// test hook
+window.__omph = { stats, V, get pole() { return pole; }, flyTo, sets, get leaves() { return leavesBySet; } };
+})();
+</script>
+</body>
+</html>
